@@ -1,0 +1,9 @@
+# Python bytecode cache
+__pycache__/
+
+# PyInstaller build artifacts
+build/
+dist/
+
+# PyInstaller spec (auto-generated)
+*.spec
