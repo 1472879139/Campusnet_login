@@ -10,6 +10,10 @@ Windows 开机自启管理
 import os
 import sys
 
+from .logger import get_logger
+
+log = get_logger(__name__)
+
 
 class AutoStartManager:
     """
@@ -106,12 +110,12 @@ class AutoStartManager:
         vbs_content = cls._build_launch_command()
 
         try:
-            # 使用系统默认编码（中文 Windows = GBK），确保 VBScript 能正确
-            # 读取 VBS 文件中的中文字符（如 exe 路径中的中文）
             with open(link_path, "w") as f:
                 f.write(vbs_content)
+            log.info("开机自启已启用: %s", link_path)
             return True
-        except (IOError, PermissionError):
+        except (IOError, PermissionError) as e:
+            log.error("开机自启启用失败: %s", e)
             return False
 
     @classmethod
@@ -126,12 +130,15 @@ class AutoStartManager:
         link_path = cls._get_link_path()
 
         if not os.path.exists(link_path):
+            log.debug("开机自启已禁用（文件不存在）")
             return True
 
         try:
             os.remove(link_path)
+            log.info("开机自启已禁用")
             return True
-        except (IOError, PermissionError):
+        except (IOError, PermissionError) as e:
+            log.error("开机自启禁用失败: %s", e)
             return False
 
     @classmethod

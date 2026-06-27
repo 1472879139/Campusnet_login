@@ -23,6 +23,9 @@ from .client import CampusClient, LoginError, NetworkParamsError
 from .config_manager import ConfigManager
 from .autostart import AutoStartManager
 from .config import get_school_list, get_campus_list, get_device_config, get_operator_map
+from .logger import get_logger
+
+log = get_logger(__name__)
 
 DEFAULT_KEEP_ALIVE_INTERVAL = 300
 MIN_KEEP_ALIVE_INTERVAL = 30
@@ -118,6 +121,8 @@ class CampusLoginGUI:
 
     def __init__(self, silent: bool = False):
         self._silent = silent
+
+        log.info("GUI 初始化 (mode=%s)", "silent" if silent else "normal")
 
         # 管理器
         self._config_mgr = ConfigManager()
@@ -613,15 +618,18 @@ class CampusLoginGUI:
 
     def _detect_auth_status(self):
         """后台线程: 检测启动时的认证状态"""
+        log.info("启动时认证状态检测中...")
         try:
             status = self._client.check_auth_status()
         except Exception:
             status = "offline"
+            log.debug("启动认证检测异常", exc_info=True)
         self._root.after(0, self._on_startup_auth_detected, status)
 
     def _on_startup_auth_detected(self, status: str):
         """主线程回调: 处理启动时认证状态检测结果"""
         self._startup_auth_checked = True
+        log.info("启动认证检测结果: %s", status)
 
         if status == "authenticated":
             self._is_logged_in = True
@@ -753,6 +761,7 @@ class CampusLoginGUI:
 
     def _on_login_success(self, message: str):
         """登录成功回调 (主线程)"""
+        log.info("登录成功: %s", message)
         self._has_ever_logged_in = True
         self._is_logged_in = True
         self._set_logging_state(False)
@@ -772,6 +781,7 @@ class CampusLoginGUI:
 
     def _on_login_failed(self, error: str):
         """登录失败回调 (主线程)"""
+        log.error("登录失败: %s", error)
         self._is_logged_in = False
         self._set_logging_state(False)
         self._draw_status_dot("red")
@@ -787,6 +797,7 @@ class CampusLoginGUI:
 
         # 状态不一致时（浏览器注销等），实际已是注销状态，只重置 UI
         if self._actually_disconnected:
+            self._auto_login_tried = True  # 恢复到离线状态，本会话不再自动登录
             self._apply_logged_out_state()
             self._set_message("UI 状态已重置，可重新登录", "gray")
             return
@@ -823,7 +834,9 @@ class CampusLoginGUI:
 
     def _on_logout_success(self, message: str):
         """注销成功回调 (主线程)"""
+        log.info("注销成功: %s", message)
         self._is_logged_in = False
+        self._auto_login_tried = True  # 用户主动注销，本会话不再自动登录
         self._set_logging_state(False)
         self._draw_status_dot("gray")
         self._status_text.set("未认证")
@@ -840,6 +853,7 @@ class CampusLoginGUI:
 
     def _on_logout_failed(self, error: str):
         """注销失败回调 (主线程)"""
+        log.error("注销失败: %s", error)
         self._set_logging_state(False)
         looks_like_param_error = (
             "网络参数" in error
@@ -880,6 +894,7 @@ class CampusLoginGUI:
 
     def _on_save_settings(self):
         """保存设置按钮"""
+        log.info("用户保存设置")
         config = self._collect_config()
         # 合并已有配置以保留内部字段（如 cached_network_params）
         existing = self._config_mgr.load()
@@ -898,6 +913,7 @@ class CampusLoginGUI:
 
     def _on_close(self):
         """窗口关闭 / 退出程序"""
+        log.info("用户请求退出程序 (is_logged_in=%s)", self._is_logged_in)
         if self._is_logged_in:
             result = messagebox.askyesnocancel(
                 "退出确认",
@@ -910,6 +926,7 @@ class CampusLoginGUI:
                 return  # 取消
             if result is True:
                 # 先注销再退出
+                log.info("退出前先注销")
                 self._do_logout_sync()
         else:
             if not messagebox.askokcancel("退出确认", "确定要退出程序吗？"):
@@ -919,6 +936,7 @@ class CampusLoginGUI:
 
     def _on_exit(self):
         """清理并退出"""
+        log.info("程序退出")
         self._stop_keep_alive()
         self._root.destroy()
 
@@ -1049,8 +1067,9 @@ class CampusLoginGUI:
         if not self._keep_alive_var.get():
             return
 
-        # 始终检测认证状态 (不登入，只探测)
-        if not self._is_logging:
+            # 始终检测认证状态 (不登入，只探测)
+            if not self._is_logging:
+                log.debug("keep-alive: 开始周期性状态检测")
             thread = threading.Thread(
                 target=self._do_status_check, daemon=True
             )
@@ -1085,10 +1104,12 @@ class CampusLoginGUI:
                     self._set_message("认证状态正常", "green")
                 return
             # 检测到已认证但 GUI 认为未登录：可能被浏览器/其他设备登录了
+            log.info("检测到外部认证（浏览器/其他设备登录），同步 UI 状态")
             self._apply_logged_in_state("检测到已认证状态，无需重复登录", "green")
 
         elif status == "not_authenticated":
             if was_logged_in:
+                log.warning("检测到认证已断开，触发断线重连逻辑")
                 self._actually_disconnected = True
                 self._draw_status_dot("orange")
                 self._status_text.set("认证已断开")
@@ -1109,6 +1130,7 @@ class CampusLoginGUI:
         else:  # offline
             if was_logged_in:
                 # 网络断开了
+                log.warning("检测到网络断开")
                 self._apply_logged_out_state()
                 self._set_message("网络连接已断开", "red")
             # 未登录 + offline：保持"未连接"状态 (可能由 _on_startup_auth_detected 设置)
@@ -1151,11 +1173,13 @@ class CampusLoginGUI:
 
     def _try_auto_reconnect(self):
         """后台尝试自动重连 (仅在之前已登录、检测到断线时调用)"""
+        log.info("尝试自动重连...")
         config = self._config_mgr.load_credentials()
         username = config.get("username")
         password = config.get("password")
 
         if not username or not password:
+            log.warning("自动重连失败: 缺少凭据")
             return
 
         thread = threading.Thread(
@@ -1170,6 +1194,7 @@ class CampusLoginGUI:
         try:
             # 重连前再确认一次状态，避免重复登录
             if self._client.check_auth_status() == "authenticated":
+                log.info("自动重连: 网络已恢复，无需重新登录")
                 self._root.after(0, self._apply_logged_in_state,
                                 "网络已恢复，无需重新登录", "green")
                 return
@@ -1184,11 +1209,12 @@ class CampusLoginGUI:
                 operator=operator,
             )
             self._root.after(0, self._on_keep_alive_reconnect, message)
-        except LoginError:
-            pass  # 静默重试，下次定时器会自动再试
+        except LoginError as e:
+            log.warning("自动重连失败: %s", e)
 
     def _on_keep_alive_reconnect(self, message: str):
         """断线自动重连成功回调"""
+        log.info("断线自动重连成功: %s", message)
         self._has_ever_logged_in = True
         self._apply_logged_in_state("断线已自动重连", "green")
 
@@ -1205,10 +1231,12 @@ class CampusLoginGUI:
 
         creds = self._config_mgr.load_credentials()
         if not creds.get("username") or not creds.get("password"):
+            log.warning("自动登录已开启但未保存凭据")
             self._set_message("自动登录已开启但未保存凭据，请手动登录", "orange")
             self._auto_login_tried = True
             return False
 
+        log.info("启动时自动登录中...")
         self._auto_login_tried = True
         self._set_message("正在自动登录...", "blue")
         self._is_logging = True
@@ -1249,6 +1277,7 @@ class CampusLoginGUI:
 
     def _on_auto_login_success(self, message: str):
         """自动登录成功回调"""
+        log.info("自动登录成功: %s", message)
         self._is_logging = False
         self._has_ever_logged_in = True
         self._apply_logged_in_state("启动时自动登录成功", "green")
@@ -1256,6 +1285,7 @@ class CampusLoginGUI:
 
     def _on_auto_login_failed(self, error: str):
         """自动登录失败回调"""
+        log.error("自动登录失败: %s", error)
         self._is_logging = False
         self._draw_status_dot("red")
         self._status_text.set("○ 连接失败")

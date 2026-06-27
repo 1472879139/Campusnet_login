@@ -18,6 +18,9 @@ import winreg
 from typing import Any, Optional
 
 from .config import DEFAULT_CONFIG
+from .logger import get_logger
+
+log = get_logger(__name__)
 
 # 用于密钥派生的固定盐值 (防止彩虹表攻击)
 _KEY_SALT = b"dormnet_login_v1\x00\xff\xaa"
@@ -108,16 +111,19 @@ class ConfigManager:
         defaults = dict(DEFAULT_CONFIG)
 
         if not os.path.exists(self._config_path):
+            log.debug("配置文件不存在，使用默认配置")
             return defaults
 
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, IOError):
+            log.warning("配置文件损坏，使用默认配置")
             return defaults
 
         # 合并默认值 (确保新增字段有默认值)
         defaults.update(data)
+        log.debug("配置加载成功 (%d keys)", len(defaults))
         return defaults
 
     def save(self, config: dict) -> None:
@@ -126,6 +132,7 @@ class ConfigManager:
 
         with open(self._config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
+        log.debug("配置已保存")
 
     def get(self, key: str, default: Any = None) -> Any:
         """读取单个配置项"""
@@ -192,6 +199,7 @@ class ConfigManager:
         config["operator"] = operator
         config["remember_password"] = remember_password
         self.save(config)
+        log.info("凭据已保存: username=%s, remember=%s", username, remember_password)
 
     def clear_credentials(self) -> None:
         """清除登录凭据 (保留其他设置)"""
@@ -200,17 +208,23 @@ class ConfigManager:
         config.pop("password", None)
         config.pop("encrypted_password", None)
         self.save(config)
+        log.info("凭据已清除")
 
     def load_network_params(self) -> Optional[dict]:
         """加载缓存的网络参数 (供跨会话注销使用)"""
-        return self.get("cached_network_params")
+        params = self.get("cached_network_params")
+        if params:
+            log.debug("已加载缓存的网络参数")
+        return params
 
     def save_network_params(self, params: dict) -> None:
         """保存网络参数到配置文件"""
         self.set("cached_network_params", params)
+        log.debug("网络参数已缓存")
 
     def clear_network_params(self) -> None:
         """清除缓存的网络参数"""
         config = self.load()
         config.pop("cached_network_params", None)
         self.save(config)
+        log.debug("缓存的网络参数已清除")

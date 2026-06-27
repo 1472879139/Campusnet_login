@@ -13,7 +13,7 @@ _parent_dir = os.path.dirname(_package_dir)
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-from dormnet_login.main import main
+from dormnet_login_v2.main import main
 
 if __name__ == "__main__":
     main()
